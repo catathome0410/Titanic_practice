@@ -1,15 +1,11 @@
 {
   "id": "catathome0410/titanic-test",
   "title": "init proj for upload",
-  "code_file": "",
-  "language": "Pick one of: {python,r,rmarkdown}",
-  "kernel_type": "Pick one of: {script,notebook}",
+  "code_file": "feb8.ipynb",
+  "language": "python",
+  "kernel_type": "Pick one of: {notebook}",
   "is_private": "true",
   "enable_gpu": "false",
   "enable_tpu": "false",
-  "enable_internet": "true",
-  "dataset_sources": [],
-  "competition_sources": [],
-  "kernel_sources": [],
-  "model_sources": []
+  "enable_internet": "true"
 }
