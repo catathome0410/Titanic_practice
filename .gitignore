@@ -50,7 +50,7 @@ Thumbs.db
 # Project specific
 output/
 data/
-# Ignore CSV files except those in data/ directory
+# Ignore CSV files
 *.csv
 
 # Logs
