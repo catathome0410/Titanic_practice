@@ -260,6 +260,8 @@ class NN_solver:
             z3_e = self.W3_c @ a2_e + self.b3_c   ## (1,n)
             a3_e = self.safe_sigmoid(z3_e)
 
+
+            #  loss = - np.sum(self.Y.T * np.log(a3_e) + (1-self.Y.T) * np.log(1-a3_e))
             loss = - np.sum(xlogy(a3_e, self.Y.T) + xlog1py(-a3_e, 1-self.Y.T))
             loss_diff = np.abs(loss - loss_prev)
             loss_prev = loss
