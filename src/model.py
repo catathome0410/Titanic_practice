@@ -1,5 +1,7 @@
 import numpy as np # linear algebra
-import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)      
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)   
+from scipy.special import xlogy, xlog1py   
+
 
 class simple_logr_scaler:
     ### uniform scaler
@@ -368,7 +370,8 @@ class NN_solver:
             z3_e = self.W3_c @ a2_e + self.b3_c   ## (1,n)
             a3_e = self.safe_sigmoid(z3_e)
 
-            loss = - np.sum(self.Y.T * np.log(a3_e) + (1-self.Y.T) * np.log(1-a3_e))
+            #  loss = - np.sum(self.Y.T * np.log(a3_e) + (1-self.Y.T) * np.log(1-a3_e))
+            loss = - np.sum(xlogy(a3_e, self.Y.T) + xlog1py(-a3_e, 1-self.Y.T))
             loss_diff = np.abs(loss - loss_prev)
             loss_prev = loss
             if i_epoch % self.output_gap == 1:
@@ -569,7 +572,8 @@ class NN_solver:
             a3_e = self.safe_sigmoid(z3_e)
 
             ### loss_arr (n_seed), Y (n), a3_e (1,n, n_seed)
-            self.loss_arr = - np.sum(self.Y[np.newaxis, :, np.newaxis] * np.log(a3_e) + (1-self.Y[np.newaxis, :, np.newaxis]) * np.log(1-a3_e), axis=1) 
+            # self.loss_arr = - np.sum(self.Y[np.newaxis, :, np.newaxis] * np.log(a3_e) + (1-self.Y[np.newaxis, :, np.newaxis]) * np.log(1-a3_e), axis=1) 
+            self.loss_arr = - np.sum(xlogy(self.Y[np.newaxis, :, np.newaxis], a3_e) + xlog1py(1-self.Y[np.newaxis, :, np.newaxis], -a3_e), axis=1) 
             loss_diff = np.abs(self.loss_arr - self.loss_arr_prev)
             self.loss_arr_prev = self.loss_arr
 
