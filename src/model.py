@@ -126,7 +126,7 @@ class log_R_solver:
 
 class NN_solver:
 
-    def __init__(self, X, Y, alpha = 0.01, dl1 = 3, dl2 = 2, dl3 = 1, epsilon = 1e-6, n_batch_size = 16, momentum = 0.9, n_seed = 40, output_gap = 5000):
+    def __init__(self, X, Y, alpha = 0.01, dl1 = 3, dl2 = 2, dl3 = 1, epsilon = 1e-6, n_batch_size = 16, momentum = 0.9, lambda2 = 0.01, n_seed = 40, output_gap = 5000):
         self.X = X
         self.Y = Y
         self.n = X.shape[0]
@@ -135,6 +135,7 @@ class NN_solver:
         self.dl1 = dl1
         self.dl2 = dl2
         self.dl3 = dl3
+        self.lambda2 = lambda2
         self.epsilon = epsilon
         self.momentum = momentum
         self.n_seed = n_seed
@@ -261,8 +262,108 @@ class NN_solver:
             a3_e = self.safe_sigmoid(z3_e)
 
 
-            #  loss = - np.sum(self.Y.T * np.log(a3_e) + (1-self.Y.T) * np.log(1-a3_e))
-            loss = - np.sum(xlogy(a3_e, self.Y.T) + xlog1py(-a3_e, 1-self.Y.T))
+            # loss = - np.mean(self.Y.T * np.log(a3_e) + (1-self.Y.T) * np.log(1-a3_e))
+            loss = - np.mean(xlogy(self.Y.T, a3_e) + xlog1py(1-self.Y.T, -a3_e))
+            loss_diff = np.abs(loss - loss_prev)
+            loss_prev = loss
+            if i_epoch % self.output_gap == 1:
+                print(f"epoch No.{i_epoch}, loss = {loss:.6f}")
+            
+            ## terminiate condition
+            if i_epoch > simple_iter_limit * 10:
+                break
+            if loss_diff < self.epsilon:
+                print("converged")
+                break
+
+        return True
+
+    def fit_batch_adjust_lr_L2(self, simple_iter_limit = 50000):
+    
+        self.W1_c = np.random.normal(loc = 0, scale = np.sqrt(2 / (self.dl1 + self.m)), size = (self.dl1, self.m))
+        vW1 = np.zeros((self.dl1, self.m))
+        self.b1_c = np.random.normal(loc = 0, scale = np.sqrt(2 / (self.dl1 + self.m)), size = (self.dl1, 1))
+        vb1 = np.zeros((self.dl1, 1))
+        self.W2_c = np.random.normal(loc = 0, scale = np.sqrt(2 / (self.dl2 + self.dl1)), size = (self.dl2, self.dl1))
+        vW2 = np.zeros((self.dl2, self.dl1))
+        self.b2_c = np.random.normal(loc = 0, scale = np.sqrt(2 / (self.dl2 + self.dl1)), size = (self.dl2, 1))
+        vb2 = np.zeros((self.dl2, 1))
+        self.W3_c = np.random.normal(loc = 0, scale = np.sqrt(2 / (self.dl3 + self.dl2)), size = (self.dl3, self.dl2))
+        vW3 = np.zeros((self.dl3, self.dl2))
+        self.b3_c = np.random.normal(loc = 0, scale = np.sqrt(2 / (self.dl3 + self.dl2)), size = (self.dl3, 1))
+        vb3 = np.zeros((self.dl3, 1))
+
+        i_epoch = 0
+        loss = 0
+        loss_prev = 1
+        
+        while True:
+            
+            idx_arr = np.random.permutation(self.n)
+            n_iter = int(self.n / self.n_batch_size)
+            
+            for i in range(n_iter):
+                idx = idx_arr[i * self.n_batch_size : (i+1) * self.n_batch_size]
+                X_c = self.X[idx, :].T
+                y_c = self.Y[idx]
+                
+                ## ======= forward prop
+                z1 = self.W1_c @ X_c + self.b1_c  ## (3,n_batch_size)
+                a1 = self.relu(z1)
+    
+                z2 = self.W2_c @ a1 + self.b2_c   ## (2,n_batch_size)
+                a2 = self.relu(z2)
+    
+                z3 = self.W3_c @ a2 + self.b3_c   ## (1,n_batch_size)
+                a3 = self.safe_sigmoid(z3)
+            
+                ## ======= backward prop
+                dLz3 = a3 - y_c   ## (1,n) 
+                dLb3 = np.mean(dLz3, axis = 1, keepdims=True)  ## (1,1)
+                ## W3 (1,2), dLW3: (1,2)
+                dLW3 = 1/dLz3.shape[1] * dLz3 @ a2.T ## (3,2) 
+    
+                ## W3.T: (2,1)  
+                dLz2 = (self.W3_c.T @ dLb3) * self.relu_derivative(z2)  ## (2,n_batch_size)
+                dLb2 = np.mean(dLz2, axis = 1, keepdims=True)  ## (2,1)
+                ## W2: (2,3), dLW2: (2,3)
+                dLW2 = 1/dLz2.shape[1] * dLz2 @ a1.T 
+    
+                ## W2.T: (3,2)
+                dLz1 = (self.W2_c.T @ dLb2) * self.relu_derivative(z1)  ## (3,n_batch_size)
+                dLb1 = np.mean(dLz1, axis = 1, keepdims=True)  ## (3,1)
+                ## W1: (3,m), dLW1: (3,m), X:(n, m)
+                dLW1 = 1/dLz1.shape[1] * dLz1 @ X_c.T
+    
+                ## ======= parameter update
+                vW3 = self.momentum * vW3 + (1-self.momentum) * (dLW3 + self.lambda2 * self.W3_c)
+                self.W3_c = self.W3_c - self.lr_cosine_annealing(i_epoch, simple_iter_limit) * vW3
+                vb3 = self.momentum * vb3 + (1-self.momentum) * dLb3
+                self.b3_c = self.b3_c - self.lr_cosine_annealing(i_epoch, simple_iter_limit) * vb3
+                vW2 = self.momentum * vW2 + (1-self.momentum) * (dLW2 + self.lambda2 * self.W2_c)
+                self.W2_c = self.W2_c - self.lr_cosine_annealing(i_epoch, simple_iter_limit) * vW2
+                vb2 = self.momentum * vb2 + (1-self.momentum) * dLb2
+                self.b2_c = self.b2_c - self.lr_cosine_annealing(i_epoch, simple_iter_limit) * vb2
+                vW1 = self.momentum * vW1 + (1-self.momentum) * (dLW1 + self.lambda2 * self.W1_c)
+                self.W1_c = self.W1_c - self.lr_cosine_annealing(i_epoch, simple_iter_limit) * vW1
+                vb1 = self.momentum * vb1 + (1-self.momentum) * dLb1
+                self.b1_c = self.b1_c - self.lr_cosine_annealing(i_epoch, simple_iter_limit) * vb1
+
+            
+            i_epoch += 1
+
+            z1_e = self.W1_c @ self.X.T + self.b1_c  ## (3,n)
+            a1_e = self.relu(z1_e)
+
+            z2_e = self.W2_c @ a1_e + self.b2_c   ## (2,n)
+            a2_e = self.relu(z2_e)
+
+            z3_e = self.W3_c @ a2_e + self.b3_c   ## (1,n)
+            a3_e = self.safe_sigmoid(z3_e)
+
+
+            #  loss = - np.mean(self.Y.T * np.log(a3_e) + (1-self.Y.T) * np.log(1-a3_e))
+            loss = - np.mean(xlogy(self.Y.T, a3_e) + xlog1py(1-self.Y.T, -a3_e)) + self.lambda2 * (np.sum(self.W1_c**2) + np.sum(self.W2_c**2) + np.sum(self.W3_c**2)) / 2
             loss_diff = np.abs(loss - loss_prev)
             loss_prev = loss
             if i_epoch % self.output_gap == 1:
@@ -316,7 +417,7 @@ class NN_solver:
             z3 = self.W3_c @ a2 + self.b3_c   ## (1,n)
             a3 = self.safe_sigmoid(z3)
 
-            loss = - np.sum(y_c * np.log(a3) + (1-y_c) * np.log(1-a3))
+            loss = - np.mean(y_c * np.log(a3) + (1-y_c) * np.log(1-a3))
             if i_iter % self.output_gap == 1:
                 print(f"iter No.{i_iter}, loss = {loss:.6f}")
            
@@ -428,19 +529,19 @@ class NN_solver:
                 dLW1 = 1/dLz1.shape[1] * np.einsum('ilk, jl-> ijk', dLz1, X_c) ## (3,m, n_seed) 
 
 
-                vW3 = self.momentum * vW3 + (1-self.momentum) * dLW3
+                vW3 = self.momentum * vW3 + (1-self.momentum) * (dLW3 + self.lambda2 * self.W3)
                 self.W3 = self.W3 - self.lr_cosine_annealing(i_epoch, shallow_iter_limit) * vW3
 
                 vb3 = self.momentum * vb3 + (1-self.momentum) * dLb3
                 self.b3 = self.b3 - self.lr_cosine_annealing(i_epoch, shallow_iter_limit) * vb3
                 
-                vW2 = self.momentum * vW2 + (1-self.momentum) * dLW2
+                vW2 = self.momentum * vW2 + (1-self.momentum) * (dLW2 + self.lambda2 * self.W2)
                 self.W2 = self.W2 - self.lr_cosine_annealing(i_epoch, shallow_iter_limit) * vW2
                 
                 vb2 = self.momentum * vb2 + (1-self.momentum) * dLb2
                 self.b2 = self.b2 - self.lr_cosine_annealing(i_epoch, shallow_iter_limit) * vb2
                 
-                vW1 = self.momentum * vW1 + (1-self.momentum) * dLW1
+                vW1 = self.momentum * vW1 + (1-self.momentum) * (dLW1 + self.lambda2 * self.W1)
                 self.W1 = self.W1 - self.lr_cosine_annealing(i_epoch, shallow_iter_limit) * vW1
                 
                 vb1 = self.momentum * vb1 + (1-self.momentum) * dLb1
@@ -463,8 +564,9 @@ class NN_solver:
             a3_e = self.safe_sigmoid(z3_e)
 
             ### loss_arr (n_seed), Y (n), a3_e (1,n, n_seed)
-            # self.loss_arr = - np.sum(self.Y[np.newaxis, :, np.newaxis] * np.log(a3_e) + (1-self.Y[np.newaxis, :, np.newaxis]) * np.log(1-a3_e), axis=1) 
-            self.loss_arr = - np.sum(xlogy(self.Y[np.newaxis, :, np.newaxis], a3_e) + xlog1py(1-self.Y[np.newaxis, :, np.newaxis], -a3_e), axis=1) 
+            # self.loss_arr = - np.mean(self.Y[np.newaxis, :, np.newaxis] * np.log(a3_e) + (1-self.Y[np.newaxis, :, np.newaxis]) * np.log(1-a3_e), axis=1) 
+            self.loss_arr = - np.mean(xlogy(self.Y[np.newaxis, :, np.newaxis], a3_e) + xlog1py(1-self.Y[np.newaxis, :, np.newaxis], -a3_e), axis=1)  ## (n_seed)
+            self.loss_arr += self.lambda2 * (np.sum(self.W1**2, axis = (0,1)) + np.sum(self.W2**2, axis = (0,1)) + np.sum(self.W3**2, axis = (0,1))) / 2
             loss_diff = np.abs(self.loss_arr - self.loss_arr_prev)
             self.loss_arr_prev = self.loss_arr
 
@@ -571,7 +673,7 @@ class NN_solver:
                 z3_e = self.W3[:, :, i] @ a2_e + self.b3[:, :, i]   ## (1,n)
                 a3_e = self.safe_sigmoid(z3_e)
                 
-                loss = - np.sum(self.Y.T * np.log(a3_e) + (1-self.Y.T) * np.log(1-a3_e))
+                loss = - np.mean(self.Y.T * np.log(a3_e) + (1-self.Y.T) * np.log(1-a3_e))
                 loss_diff = np.abs(loss - loss_prev)
                 loss_prev = loss
                 self.loss_arr[i] = loss
@@ -689,7 +791,7 @@ class NN_solver:
             z3_e = self.W3_c @ a2_e + self.b3_c   ## (1,n)
             a3_e = self.safe_sigmoid(z3_e)
 
-            loss = - np.sum(self.Y.T * np.log(a3_e) + (1-self.Y.T) * np.log(1-a3_e))
+            loss = - np.mean(self.Y.T * np.log(a3_e) + (1-self.Y.T) * np.log(1-a3_e))
             loss_diff = np.abs(loss - loss_prev)
             loss_prev = loss
             if i_epoch % self.output_gap == 1:
